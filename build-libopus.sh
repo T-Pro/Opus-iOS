@@ -23,8 +23,10 @@
 #  Choose your libopus version and your currently-installed iOS SDK version:
 #
 VERSION="1.3.1"
-SDKVERSION=$(xcrun --sdk iphoneos --show-sdk-version)
+IPHONE_SDK_VERSION=$(xcrun --sdk iphoneos --show-sdk-version)
+MACOSX_SDK_VERSION=$(xcrun --sdk macosx --show-sdk-version)
 MINIOSVERSION="8.0"
+MIN_OSX_VERSION="10.15"
 
 ###########################################################################
 #
@@ -47,7 +49,7 @@ fi
 
 # No need to change this since xcode build will only compile in the
 # necessary bits from the libraries we create
-ARCHS="i386 x86_64 armv7 armv7s arm64"
+ARCHS="catalyst armv7 armv7s arm64"
 
 DEVELOPER=`xcode-select -print-path`
 #DEVELOPER="/Applications/Xcode.app/Contents/Developer"
@@ -101,23 +103,41 @@ export ORIGINALPATH=$PATH
 
 for ARCH in ${ARCHS}
 do
-    if [ "${ARCH}" == "i386" ] || [ "${ARCH}" == "x86_64" ]; then
+    if [ "${ARCH}" == "x86_64" ]; then
         PLATFORM="iPhoneSimulator"
         EXTRA_CFLAGS="-arch ${ARCH}"
         EXTRA_CONFIG="--host=x86_64-apple-darwin"
-    else
+    elif [ "${ARCH}" == "catalyst" ]; then
+		PLATFORM="MacOSX"
+        EXTRA_CFLAGS="-arch x86_64"
+        EXTRA_CONFIG="--host=x86_64-apple-darwin"
+	else
         PLATFORM="iPhoneOS"
         EXTRA_CFLAGS="-arch ${ARCH}"
         EXTRA_CONFIG="--host=arm-apple-darwin"
     fi
 
-	mkdir -p "${INTERDIR}/${PLATFORM}${SDKVERSION}-${ARCH}.sdk"
+	if [ "${ARCH}" == "catalyst" ]; then
 
-	./configure --enable-float-approx --disable-shared --enable-static --with-pic --disable-extra-programs --disable-doc ${EXTRA_CONFIG} \
-    --prefix="${INTERDIR}/${PLATFORM}${SDKVERSION}-${ARCH}.sdk" \
-    LDFLAGS="$LDFLAGS ${OPT_LDFLAGS} -fPIE -miphoneos-version-min=${MINIOSVERSION} -L${OUTPUTDIR}/lib" \
-    CFLAGS="$CFLAGS ${EXTRA_CFLAGS} ${OPT_CFLAGS} -fPIE -miphoneos-version-min=${MINIOSVERSION} -I${OUTPUTDIR}/include -isysroot ${DEVELOPER}/Platforms/${PLATFORM}.platform/Developer/SDKs/${PLATFORM}${SDKVERSION}.sdk" \
+		mkdir -p "${INTERDIR}/${PLATFORM}${MACOSX_SDK_VERSION}-x86_64.sdk"
 
+		./configure --enable-float-approx --disable-shared --enable-static --with-pic --disable-extra-programs --disable-doc ${EXTRA_CONFIG} \
+		--prefix="${INTERDIR}/${PLATFORM}${MACOSX_SDK_VERSION}-x86_64.sdk" \
+		LDFLAGS="$LDFLAGS ${OPT_LDFLAGS} -fPIE -mmacosx-version-min=${MIN_OSX_VERSION} -L${OUTPUTDIR}/lib" \
+		CFLAGS="$CFLAGS ${EXTRA_CFLAGS} ${OPT_CFLAGS} -fPIE -mmacosx-version-min=${MIN_OSX_VERSION} -target x86_64-apple-ios${MIN_IOS_VERSION}-macabi -I${OUTPUTDIR}/include -isysroot ${DEVELOPER}/Platforms/${PLATFORM}.platform/Developer/SDKs/${PLATFORM}${MACOSX_SDK_VERSION}.sdk" \
+
+	else
+
+		mkdir -p "${INTERDIR}/${PLATFORM}${IPHONE_SDK_VERSION}-${ARCH}.sdk"
+
+		./configure --enable-float-approx --disable-shared --enable-static --with-pic --disable-extra-programs --disable-doc ${EXTRA_CONFIG} \
+		--prefix="${INTERDIR}/${PLATFORM}${IPHONE_SDK_VERSION}-${ARCH}.sdk" \
+		LDFLAGS="$LDFLAGS ${OPT_LDFLAGS} -fPIE -miphoneos-version-min=${MINIOSVERSION} -L${OUTPUTDIR}/lib" \
+		CFLAGS="$CFLAGS ${EXTRA_CFLAGS} ${OPT_CFLAGS} -fPIE -miphoneos-version-min=${MINIOSVERSION} -I${OUTPUTDIR}/include -isysroot ${DEVELOPER}/Platforms/${PLATFORM}.platform/Developer/SDKs/${PLATFORM}${IPHONE_SDK_VERSION}.sdk" \
+
+	fi
+
+	
     # Build the application and install it to the fake SDK intermediary dir
     # we have set up. Make sure to clean up afterward because we will re-use
     # this source tree to cross-compile other targets.
@@ -135,16 +155,26 @@ OUTPUT_LIBS="libopus.a"
 for OUTPUT_LIB in ${OUTPUT_LIBS}; do
 	INPUT_LIBS=""
 	for ARCH in ${ARCHS}; do
-		if [ "${ARCH}" == "i386" ] || [ "${ARCH}" == "x86_64" ];
-		then
+		if [ "${ARCH}" == "x86_64" ]; then
 			PLATFORM="iPhoneSimulator"
+			INPUT_ARCH_LIB="${INTERDIR}/${PLATFORM}${IPHONE_SDK_VERSION}-${ARCH}.sdk/lib/${OUTPUT_LIB}"
+			if [ -e $INPUT_ARCH_LIB ]; then
+				INPUT_LIBS="${INPUT_LIBS} ${INPUT_ARCH_LIB}"
+			fi
+		elif [ "${ARCH}" == "catalyst" ]; then
+			PLATFORM="MacOSX"
+			INPUT_ARCH_LIB="${INTERDIR}/${PLATFORM}${MACOSX_SDK_VERSION}-x86_64.sdk/lib/${OUTPUT_LIB}"
+			if [ -e $INPUT_ARCH_LIB ]; then
+				INPUT_LIBS="${INPUT_LIBS} ${INPUT_ARCH_LIB}"
+			fi
 		else
 			PLATFORM="iPhoneOS"
+			INPUT_ARCH_LIB="${INTERDIR}/${PLATFORM}${IPHONE_SDK_VERSION}-${ARCH}.sdk/lib/${OUTPUT_LIB}"
+			if [ -e $INPUT_ARCH_LIB ]; then
+				INPUT_LIBS="${INPUT_LIBS} ${INPUT_ARCH_LIB}"
+			fi
 		fi
-		INPUT_ARCH_LIB="${INTERDIR}/${PLATFORM}${SDKVERSION}-${ARCH}.sdk/lib/${OUTPUT_LIB}"
-		if [ -e $INPUT_ARCH_LIB ]; then
-			INPUT_LIBS="${INPUT_LIBS} ${INPUT_ARCH_LIB}"
-		fi
+		
 	done
 	# Combine the three architectures into a universal library.
 	if [ -n "$INPUT_LIBS"  ]; then
@@ -156,13 +186,17 @@ for OUTPUT_LIB in ${OUTPUT_LIBS}; do
 done
 
 for ARCH in ${ARCHS}; do
-	if [ "${ARCH}" == "i386" ] || [ "${ARCH}" == "x86_64" ];
-	then
+	if [ "${ARCH}" == "x86_64" ]; then
 		PLATFORM="iPhoneSimulator"
+		cp -R ${INTERDIR}/${PLATFORM}${IPHONE_SDK_VERSION}-${ARCH}.sdk/include/* ${OUTPUTDIR}/include/
+	elif [ "${ARCH}" == "catalyst" ]; then
+		PLATFORM="MacOSX"
+		cp -R ${INTERDIR}/${PLATFORM}${MACOSX_SDK_VERSION}-x86_64.sdk/include/* ${OUTPUTDIR}/include/
 	else
 		PLATFORM="iPhoneOS"
+		cp -R ${INTERDIR}/${PLATFORM}${IPHONE_SDK_VERSION}-${ARCH}.sdk/include/* ${OUTPUTDIR}/include/
 	fi
-	cp -R ${INTERDIR}/${PLATFORM}${SDKVERSION}-${ARCH}.sdk/include/* ${OUTPUTDIR}/include/
+	
 	if [ $? == "0" ]; then
 		# We only need to copy the headers over once. (So break out of forloop
 		# once we get first success.)
@@ -175,6 +209,6 @@ done
 
 echo "Building done."
 echo "Cleaning up..."
-rm -fr ${INTERDIR}
-rm -fr "${SRCDIR}/opus-${VERSION}"
+# rm -fr ${INTERDIR}
+# rm -fr "${SRCDIR}/opus-${VERSION}"
 echo "Done."
